@@ -7,7 +7,7 @@ Suporta:
    Lê diretamente o msgstore.db (descriptografado do msgstore.db.crypt15 via ADB + chave 64 dígitos),
    localiza os áudios em WhatsApp Voice Notes / WhatsApp Audio, copia os áudios da conversa para uma
    pasta dedicada no diretório corrente, transcreve via CscTracker AI BFF (https://bff.csctracker.com/ai-processor/analyze)
-   seguindo o padrão arquitetural do CscTrackerVigilante (task="transcrição de audio do whats", model="lite", zero thinking)
+   seguindo o padrão hardcoded do CscTrackerVigilante (model='lite', thinking_level='minimal', task='transcrição de audio do whats')
    e gera a conversa formatada (DD/MM/YYYY HH:MM:SS - Nome: Mensagem) + PDF estruturado.
 2. Modo ZIP Exportado (Método 1 - Legado):
    Processa arquivos .zip exportados pelo WhatsApp, transcrevendo áudios "(arquivo anexado)" e gerando TXT + PDF.
@@ -29,75 +29,59 @@ from typing import Dict, List, Optional, Set, Tuple
 import requests
 
 
-AI_PROCESSOR_DEFAULT_URL = "https://bff.csctracker.com/ai-processor/analyze"
-DEFAULT_AI_TASK = "transcrição de audio"
-
-
 def analyze(
     prompt_texto: str,
-    input_text: str,
-    file_base64: Optional[str] = None,
-    mime_type: str = "audio/ogg",
-    model: Optional[str] = "lite",
-    return_json: bool = False,
-    task: str = DEFAULT_AI_TASK,
-    force_paid: bool = True,
-    event_id: Optional[str] = None,
-    token: Optional[str] = None,
-    thinking_level: Optional[str] = "minimal",
-    ai_url: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[int]]:
+    file_base64: str,
+    mime_type: str,
+    event_id: str,
+    token: str,
+) -> Optional[str]:
     """
-    Realiza a chamada ao endpoint central CscTracker AI (/ai-processor/analyze),
-    seguindo exatamente o contrato utilizado pelo CscTrackerVigilante com zero thinking.
+    Chamada direta ao CscTracker AI hardcoded como no CscTrackerVigilante:
+    model='lite', thinking_level='minimal', force_paid=True, return_json=False.
     """
-    effective_model = model if model else os.getenv("GEMINI_MODEL", "lite")
-    effective_thinking = thinking_level if thinking_level else os.getenv("GEMINI_THINKING_LEVEL", "minimal")
-    effective_token = token if token else os.getenv("TOKEN_CSCTRACKER")
-    effective_url = ai_url if ai_url else os.getenv("CSCTRACKER_AI_URL", AI_PROCESSOR_DEFAULT_URL)
-
     _body = {
         "prompt": prompt_texto,
-        "input_text": input_text,
+        "input_text": "",
         "base64": file_base64,
         "mime_type": mime_type,
-        "model": effective_model,
-        "return_json": return_json,
-        "task": task,
-        "force_paid": force_paid,
+        "model": "lite",
+        "return_json": False,
+        "task": "Transcrição de audio",
+        "force_paid": True,
         "event_id": event_id,
-        "thinking_level": effective_thinking,
+        "thinking_level": "minimal",
     }
 
     _headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Authorization": f"Bearer {effective_token}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
     try:
         _response = requests.post(
-            effective_url,
+            "https://bff.csctracker.com/ai-processor/analyze",
             json=_body,
             headers=_headers,
             timeout=6000,
         )
         if not (200 <= _response.status_code < 300):
             print(f"[{event_id}] Erro HTTP {_response.status_code} no CscTracker AI: {_response.text}")
-            return None, None
+            return None
 
         try:
             _resp_json = _response.json()
             if isinstance(_resp_json, dict):
-                return _resp_json.get("response"), _resp_json.get("input_tokens")
-            return str(_resp_json), 0
+                return _resp_json.get("response")
+            return str(_resp_json)
         except json.JSONDecodeError:
-            return _response.text, 0
+            return _response.text
     except Exception as e:
         print(f"[{event_id}] Erro na chamada ao CscTracker AI: {e}")
-        return None, None
+        return None
 
 
 class WhatsAppMediaProcessor:
@@ -112,9 +96,6 @@ class WhatsAppMediaProcessor:
         contact_name: str = "Suelen Boff",
         my_name: str = "Carlos Eduardo",
         work_dir: Optional[str] = None,
-        gemini_model: str = "lite",
-        thinking_level: str = "minimal",
-        ai_task: str = DEFAULT_AI_TASK,
     ):
         self.zip_path = Path(zip_path) if zip_path else None
         self.db_path = Path(db_path) if db_path else None
@@ -129,9 +110,6 @@ class WhatsAppMediaProcessor:
         self.audio_index_by_name: Dict[str, Path] = {}
         self.conversation_file: Optional[str] = None
         self.token_csctracker = token_csctracker or os.getenv("TOKEN_CSCTRACKER")
-        self.gemini_model = gemini_model or os.getenv("GEMINI_MODEL", "lite")
-        self.thinking_level = thinking_level or os.getenv("GEMINI_THINKING_LEVEL", "minimal")
-        self.ai_task = ai_task
         self.extract_dir: Optional[Path] = None
         self.checkpoint_file: Optional[Path] = None
         self.transcribed_files: Set[str] = set()
@@ -160,7 +138,6 @@ class WhatsAppMediaProcessor:
             if rows:
                 return rows[0][0], rows[0][1]
 
-        # Se não encontrou pelo filtro, lista os chats com mais mensagens para ajudar no diagnóstico
         cur.execute(
             """
             SELECT c._id, j.raw_string, COUNT(m._id) as total_msgs
@@ -397,19 +374,15 @@ class WhatsAppMediaProcessor:
         if not raw_text:
             return ""
         text = raw_text.strip()
-        # Remove tags deliberadas de raciocínio caso ocorram
         text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        # Remove chamadas simuladas de ferramentas/duração e metadados em inglês
         text = re.sub(r"get_audio_duration\(\).*?(?=[A-ZÁÉÍÓÚÀÂÊÔÃÕ\"0-9]|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"^.*?the audio duration is.*?(?=[A-ZÁÉÍÓÚÀÂÊÔÃÕ\"0-9]|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"^(?:Using context|Transcription rule|Audio language|Unintelligible rule).*?\n+", "", text, flags=re.MULTILINE | re.IGNORECASE)
-        # Se o modelo repetiu o texto após linhas com timestamps (ex: 00:00 - 00:10: "...")
         if "\n\n" in text and any(k in text for k in ["00:", "timestamp", "duration"]):
             parts = [p.strip() for p in text.split("\n\n") if p.strip()]
             if len(parts) > 1 and not re.search(r"^\d{2}:\d{2}", parts[-1]):
                 text = parts[-1]
-        # Remove aspas soltas no início e fim
         text = re.sub(r"^[\"']|[\"']$", "", text.strip())
         return text.strip()
 
@@ -417,7 +390,6 @@ class WhatsAppMediaProcessor:
         """
         Envia o áudio codificado em Base64 para https://bff.csctracker.com/ai-processor/analyze
         utilizando TOKEN_CSCTRACKER, model='lite', thinking_level='minimal' e task='transcrição de audio do whats'.
-        Retorna (texto_formatado, sucesso_booleano).
         """
         if not self.token_csctracker:
             return f"[ÁUDIO: {audio_file_path.name} - TOKEN_CSCTRACKER não configurado]", False
@@ -433,18 +405,12 @@ class WhatsAppMediaProcessor:
                 "Se não conseguir entender partes do áudio, indique com [inaudível]."
             )
 
-            response_text, _input_tokens = analyze(
+            response_text = analyze(
                 prompt_texto=prompt,
-                input_text="",
                 file_base64=audio_b64,
                 mime_type=mime_type,
-                model=self.gemini_model,
-                return_json=False,
-                task=self.ai_task,
-                force_paid=True,
                 event_id=audio_file_path.name,
                 token=self.token_csctracker,
-                thinking_level="minimal",
             )
 
             transcription = self._clean_transcription_text(str(response_text)) if response_text else ""
@@ -501,7 +467,6 @@ class WhatsAppMediaProcessor:
 
             clean_filename = filename.replace("\u200e", "").replace("\u200f", "").strip()
 
-            # Se já consta no checkpoint com transcrição salva, reutiliza sem gastar chamada
             if clean_filename in self.transcribed_files and clean_filename in self.transcriptions_map:
                 cached_text = self.transcriptions_map[clean_filename]
                 processed_lines.append(f"📝 {cached_text}")
@@ -542,9 +507,7 @@ class WhatsAppMediaProcessor:
     # ==========================================================================
     def generate_structured_pdf(self, processed_txt_path: str, pdf_output_path: Optional[str] = None) -> str:
         """
-        Gera um PDF estruturado e elegante a partir do arquivo de conversa processado,
-        exibindo Data, Hora:Minuto:Segundo, Autor (Suelen Boff / Carlos Eduardo),
-        texto da mensagem e blocos destacados de transcrição de áudio.
+        Gera um PDF estruturado e elegante a partir do arquivo de conversa processado.
         """
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
@@ -735,8 +698,6 @@ def main():
     parser.add_argument("--no-pdf", action="store_true", help="Desativa a geração do PDF")
     parser.add_argument("--verbose", "-v", action="store_true", help="Ativa saída detalhada")
     parser.add_argument("--token-csctracker", help="Token Bearer do CscTracker (ou use a variável de ambiente TOKEN_CSCTRACKER)")
-    parser.add_argument("--gemini-model", default="lite", help="Modelo no CscTracker AI: lite, flash ou pro (padrão: lite)")
-    parser.add_argument("--thinking-level", default="minimal", help="Nível de raciocínio: minimal ou low (padrão: minimal)")
     parser.add_argument("--resume", action="store_true", help="Continua de onde parou usando o checkpoint (padrão)")
     parser.add_argument("--no-resume", action="store_true", help="Força início do zero ignorando o checkpoint")
 
@@ -759,9 +720,6 @@ def main():
             contact_name=args.contact_name,
             my_name=args.my_name,
             work_dir=args.work_dir,
-            gemini_model=args.gemini_model or os.getenv("GEMINI_MODEL", "lite"),
-            thinking_level=args.thinking_level or os.getenv("GEMINI_THINKING_LEVEL", "minimal"),
-            ai_task=DEFAULT_AI_TASK,
         )
 
         if args.db:
