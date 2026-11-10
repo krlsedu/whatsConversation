@@ -7,7 +7,7 @@ Suporta:
    Lê diretamente o msgstore.db (descriptografado do msgstore.db.crypt15 via ADB + chave 64 dígitos),
    localiza os áudios em WhatsApp Voice Notes / WhatsApp Audio, copia os áudios da conversa para uma
    pasta dedicada no diretório corrente, transcreve via CscTracker AI BFF (https://bff.csctracker.com/ai-processor/analyze)
-   seguindo o padrão arquitetural do CscTrackerVigilante (task="transcrição de audio do whats")
+   seguindo o padrão arquitetural do CscTrackerVigilante (task="transcrição de audio do whats", model="lite", zero thinking)
    e gera a conversa formatada (DD/MM/YYYY HH:MM:SS - Nome: Mensagem) + PDF estruturado.
 2. Modo ZIP Exportado (Método 1 - Legado):
    Processa arquivos .zip exportados pelo WhatsApp, transcrevendo áudios "(arquivo anexado)" e gerando TXT + PDF.
@@ -30,7 +30,7 @@ import requests
 
 
 AI_PROCESSOR_DEFAULT_URL = "https://bff.csctracker.com/ai-processor/analyze"
-DEFAULT_AI_TASK = "Transcrição de audio"
+DEFAULT_AI_TASK = "transcrição de audio"
 
 
 def analyze(
@@ -38,7 +38,7 @@ def analyze(
     input_text: str,
     file_base64: Optional[str] = None,
     mime_type: str = "audio/ogg",
-    model: Optional[str] = None,
+    model: Optional[str] = "lite",
     return_json: bool = False,
     task: str = DEFAULT_AI_TASK,
     force_paid: bool = True,
@@ -49,9 +49,9 @@ def analyze(
 ) -> Tuple[Optional[str], Optional[int]]:
     """
     Realiza a chamada ao endpoint central CscTracker AI (/ai-processor/analyze),
-    seguindo exatamente o contrato utilizado pelo CscTrackerVigilante.
+    seguindo exatamente o contrato utilizado pelo CscTrackerVigilante com zero thinking.
     """
-    effective_model = model if model else os.getenv("GEMINI_MODEL", "flash")
+    effective_model = model if model else os.getenv("GEMINI_MODEL", "lite")
     effective_thinking = thinking_level if thinking_level else os.getenv("GEMINI_THINKING_LEVEL", "minimal")
     effective_token = token if token else os.getenv("TOKEN_CSCTRACKER")
     effective_url = ai_url if ai_url else os.getenv("CSCTRACKER_AI_URL", AI_PROCESSOR_DEFAULT_URL)
@@ -416,7 +416,7 @@ class WhatsAppMediaProcessor:
     def transcribe_audio(self, audio_file_path: Path) -> Tuple[str, bool]:
         """
         Envia o áudio codificado em Base64 para https://bff.csctracker.com/ai-processor/analyze
-        utilizando TOKEN_CSCTRACKER e task='transcrição de audio do whats', conforme o CscTrackerVigilante.
+        utilizando TOKEN_CSCTRACKER, model='lite', thinking_level='minimal' e task='transcrição de audio do whats'.
         Retorna (texto_formatado, sucesso_booleano).
         """
         if not self.token_csctracker:
@@ -735,8 +735,8 @@ def main():
     parser.add_argument("--no-pdf", action="store_true", help="Desativa a geração do PDF")
     parser.add_argument("--verbose", "-v", action="store_true", help="Ativa saída detalhada")
     parser.add_argument("--token-csctracker", help="Token Bearer do CscTracker (ou use a variável de ambiente TOKEN_CSCTRACKER)")
-    parser.add_argument("--gemini-model", default=None, help="Modelo no CscTracker AI: flash, pro ou lite (padrão: flash)")
-    parser.add_argument("--thinking-level", default=None, help="Nível de raciocínio: low ou minimal (padrão: low)")
+    parser.add_argument("--gemini-model", default="lite", help="Modelo no CscTracker AI: lite, flash ou pro (padrão: lite)")
+    parser.add_argument("--thinking-level", default="minimal", help="Nível de raciocínio: minimal ou low (padrão: minimal)")
     parser.add_argument("--resume", action="store_true", help="Continua de onde parou usando o checkpoint (padrão)")
     parser.add_argument("--no-resume", action="store_true", help="Força início do zero ignorando o checkpoint")
 
@@ -759,8 +759,8 @@ def main():
             contact_name=args.contact_name,
             my_name=args.my_name,
             work_dir=args.work_dir,
-            gemini_model=args.gemini_model or os.getenv("GEMINI_MODEL", "flash"),
-            thinking_level=args.thinking_level or os.getenv("GEMINI_THINKING_LEVEL", "low"),
+            gemini_model=args.gemini_model or os.getenv("GEMINI_MODEL", "lite"),
+            thinking_level=args.thinking_level or os.getenv("GEMINI_THINKING_LEVEL", "minimal"),
             ai_task=DEFAULT_AI_TASK,
         )
 
