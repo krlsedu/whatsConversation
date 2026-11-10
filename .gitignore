@@ -1,1 +1,7 @@
 .idea
+dados_whatsapp/
+*_extracted/
+__pycache__/
+*.pyc
+*.db
+*.crypt15
