@@ -75,8 +75,16 @@ if (-not (Test-Path $waAudioLocal)) {
     Write-Host "4. Pasta WhatsApp Audio ja existe localmente." -ForegroundColor Yellow
 }
 
-Write-Host "5. Garantindo dependencias Python (requests, wa-crypt-tools, reportlab)..." -ForegroundColor Cyan
-python -m pip install --upgrade requests wa-crypt-tools reportlab
+$waImagesLocal = Join-Path $PastaRaw "WhatsApp Images"
+if (-not (Test-Path $waImagesLocal)) {
+    Write-Host "5. Copiando Imagens (WhatsApp Images) para .\dados_whatsapp\raw_android..." -ForegroundColor Cyan
+    & $adb pull "$baseWaPath/Media/WhatsApp Images" $waImagesLocal
+} else {
+    Write-Host "5. Pasta WhatsApp Images ja existe localmente." -ForegroundColor Yellow
+}
+
+Write-Host "6. Garantindo dependencias Python (requests, wa-crypt-tools, reportlab, pillow)..." -ForegroundColor Cyan
+python -m pip install --upgrade requests wa-crypt-tools reportlab pillow
 
 if (-not (Test-Path $sqlitePath)) {
     if ([string]::IsNullOrWhiteSpace($Chave64Digitos)) {
@@ -84,10 +92,10 @@ if (-not (Test-Path $sqlitePath)) {
     }
     $ChaveLimpa = ($Chave64Digitos -replace "\s+", "").Trim()
 
-    Write-Host "6. Descriptografando msgstore.db.crypt15 -> .\dados_whatsapp\msgstore.db..." -ForegroundColor Cyan
+    Write-Host "7. Descriptografando msgstore.db.crypt15 -> .\dados_whatsapp\msgstore.db..." -ForegroundColor Cyan
     wadecrypt $ChaveLimpa $crypt15Path $sqlitePath
 } else {
-    Write-Host "6. Banco .\dados_whatsapp\msgstore.db ja esta descriptografado." -ForegroundColor Green
+    Write-Host "7. Banco .\dados_whatsapp\msgstore.db ja esta descriptografado." -ForegroundColor Green
 }
 
 if ([string]::IsNullOrWhiteSpace($TelefoneContato)) {
@@ -104,5 +112,5 @@ if (-not [string]::IsNullOrWhiteSpace($TokenCscTracker)) {
 }
 
 $scriptPy = Join-Path $BaseDir "whatsapp_media_processor.py"
-Write-Host "7. Executando whatsapp_media_processor.py (Extracao SQLite + Transcricao CscTracker AI + Geracao PDF)..." -ForegroundColor Cyan
+Write-Host "8. Executando whatsapp_media_processor.py (Extracao SQLite + Transcricao CscTracker AI + Geracao PDF)..." -ForegroundColor Cyan
 python $scriptPy --db $sqlitePath --media-dir $PastaRaw --phone $TelefoneContato --contact-name $NomeContato --my-name $MeuNome --work-dir $PastaDados --pdf --verbose
